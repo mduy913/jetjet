@@ -1,23 +1,318 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web</title>
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trang Web Khóa</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+  }
+
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    transition: filter 0.3s ease;
+  }
+
+  .container {
+    text-align: center;
+    padding: 40px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    max-width: 500px;
+    width: 90%;
+  }
+
+  h1 {
+    font-size: 2rem;
+    margin-bottom: 15px;
+  }
+
+  p {
+    font-size: 1.1rem;
+    opacity: 0.9;
+    line-height: 1.6;
+  }
+
+  /* Lớp phủ khóa toàn màn hình */
+  #lockOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.92);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    z-index: 9999;
+    color: #fff;
+    text-align: center;
+    padding: 20px;
+  }
+
+  #lockOverlay.active {
+    display: flex;
+  }
+
+  #lockOverlay .icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    animation: pulse 1.5s infinite;
+  }
+
+  #lockOverlay h2 {
+    font-size: 1.8rem;
+    margin-bottom: 15px;
+    color: #ff6b6b;
+  }
+
+  #lockOverlay p {
+    font-size: 1.1rem;
+    opacity: 0.85;
+    margin-bottom: 10px;
+  }
+
+  #countdown {
+    font-size: 3rem;
+    font-weight: bold;
+    color: #ffd93d;
+    margin-top: 10px;
+    min-height: 60px;
+  }
+
+  .spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #ffd93d;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-top: 10px;
+    display: none;
+  }
+
+  .spinner.active {
+    display: block;
+  }
+
+  /* Làm mờ nội dung chính khi bị khóa */
+  body.locked .container {
+    filter: blur(5px);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.15); opacity: 0.7; }
+  }
+
+  /* Cảnh báo khi sắp rời trang */
+  #beforeUnloadMsg {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #ff6b6b;
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    display: none;
+    z-index: 10000;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  }
+</style>
 </head>
 <body>
 
-    <canvas id="heartCanvas"></canvas>
+<div class="container">
+  <h1>🔒 Trang Web Được Bảo Vệ</h1>
+  <p>Trang web này sẽ tạm khóa nếu bạn rời khỏi tab hoặc chuyển sang ứng dụng khác.</p>
+  <p style="margin-top: 15px; font-size: 0.95rem; opacity: 0.7;">
+    Khi bạn quay lại, bạn sẽ phải chờ <strong>3 giây</strong> để được vào lại.
+  </p>
+</div>
 
-    <div class="shop-container">
-        <h1 class="shop-title">SHOP CỦA BẠN</h1>
-        <p class="shop-subtitle">Sản phẩm chính hãng - Giao hàng toàn quốc</p>
-        <button class="shop-btn" id="buyBtn">
-            Mua Ngay
-        </button>
-    </div>
+<!-- Lớp phủ khóa -->
+<div id="lockOverlay">
+  <div class="icon">🚫</div>
+  <h2>Bạn đã rời khỏi trang!</h2>
+  <p>Vui lòng chờ để được vào lại...</p>
+  <div id="countdown"></div>
+  <div class="spinner" id="spinner"></div>
+</div>
 
-    <script src="script.js"></script>
+<!-- Thông báo trước khi rời trang -->
+<div id="beforeUnloadMsg">
+  ⚠️ Bạn đang rời khỏi trang. Trang sẽ bị khóa khi quay lại!
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const lockOverlay = document.getElementById("lockOverlay");
+  const countdownEl = document.getElementById("countdown");
+  const spinner = document.getElementById("spinner");
+  const beforeUnloadMsg = document.getElementById("beforeUnloadMsg");
+
+  // Trạng thái
+  let isLocked = false;          // Đang trong thời gian khóa / chờ
+  let hasLeftPage = false;       // Đã từng rời trang chưa
+  let countdownTimer = null;     // Timer đếm ngược
+  let waitingForFocus = false;   // Đang chờ người dùng quay lại tab
+
+  const LOCK_DURATION = 3;       // Số giây chờ khi vào lại
+
+  /**
+   * Khóa trang: hiển thị overlay + đếm ngược 3s.
+   * Được gọi khi người dùng quay lại tab sau khi đã rời đi.
+   */
+  function startLock() {
+    if (isLocked) return;
+    isLocked = true;
+    waitingForFocus = false;
+    hasLeftPage = true;
+
+    document.body.classList.add("locked");
+    lockOverlay.classList.add("active");
+    spinner.classList.remove("active");
+    countdownEl.textContent = "";
+    beforeUnloadMsg.style.display = "none";
+
+    let remaining = LOCK_DURATION;
+    countdownEl.textContent = remaining;
+
+    // Đếm ngược mỗi giây
+    countdownTimer = setInterval(function () {
+      remaining -= 1;
+
+      if (remaining > 0) {
+        countdownEl.textContent = remaining;
+      } else {
+        // Hết 3 giây -> mở khóa
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+        unlockPage();
+      }
+    }, 1000);
+  }
+
+  /**
+   * Mở khóa trang: ẩn overlay, cho phép sử dụng lại.
+   */
+  function unlockPage() {
+    isLocked = false;
+    hasLeftPage = false;
+    document.body.classList.remove("locked");
+    lockOverlay.classList.remove("active");
+    countdownEl.textContent = "";
+    spinner.classList.remove("active");
+  }
+
+  /**
+   * Hiển thị cảnh báo nhỏ ở dưới khi người dùng sắp rời trang
+   * (dùng cho trường hợp chuyển tab / thu nhỏ cửa sổ, không phải đóng hẳn).
+   */
+  function showLeaveWarning() {
+    beforeUnloadMsg.style.display = "block";
+  }
+
+  function hideLeaveWarning() {
+    beforeUnloadMsg.style.display = "none";
+  }
+
+  /**
+   * Khi tab bị ẩn (chuyển tab, thu nhỏ cửa sổ, chuyển sang app khác)
+   * visibilitychange được kích hoạt trên hầu hết trình duyệt hiện đại.
+   */
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      // Người dùng rời khỏi tab
+      if (!isLocked) {
+        hasLeftPage = true;
+        showLeaveWarning();
+      }
+    } else {
+      // Người dùng quay lại tab
+      hideLeaveWarning();
+
+      if (hasLeftPage && !isLocked) {
+        // Bắt đầu khóa và đếm ngược 3 giây
+        startLock();
+      }
+    }
+  });
+
+  /**
+   * Fallback cho trình duyệt cũ / trường hợp window blur.
+   * Khi cửa sổ mất focus (chuyển sang ứng dụng khác trên desktop).
+   */
+  window.addEventListener("blur", function () {
+    if (!isLocked) {
+      hasLeftPage = true;
+      showLeaveWarning();
+    }
+  });
+
+  window.addEventListener("focus", function () {
+    hideLeaveWarning();
+
+    if (hasLeftPage && !isLocked) {
+      // Đợi một chút để chắc chắn tab đã thực sự được focus lại
+      setTimeout(function () {
+        if (hasLeftPage && !isLocked && document.visibilityState === "visible") {
+          startLock();
+        }
+      }, 150);
+    }
+  });
+
+  /**
+   * Khi người dùng cố đóng tab / tải lại trang / điều hướng đi nơi khác.
+   * Trình duyệt sẽ hiện hộp thoại xác nhận.
+   */
+  window.addEventListener("beforeunload", function (e) {
+    // Chỉ cảnh báo nếu trang đang không bị khóa
+    if (!isLocked) {
+      const msg = "Bạn có chắc muốn rời khỏi trang? Trang sẽ bị khóa khi bạn quay lại.";
+      e.preventDefault();
+      e.returnValue = msg;
+      return msg;
+    }
+  });
+
+  /**
+   * Xử lý khi trang được tải lại (F5) hoặc quay lại từ lịch sử.
+   * Sử dụng sessionStorage để biết người dùng vừa rời trang.
+   */
+  window.addEventListener("pageshow", function (event) {
+    // Nếu là trang được khôi phục từ bfcache (quay lại bằng nút Back)
+    if (event.persisted && !isLocked) {
+      // Có thể coi như vừa quay lại -> khóa 3s
+      hasLeftPage = true;
+      startLock();
+    }
+  });
+
+  // Khóa trang ngay khi tải lần đầu? Không cần, chỉ khóa khi rời đi rồi quay lại.
+  // Đảm bảo trạng thái ban đầu sạch sẽ.
+  unlockPage();
+})();
+</script>
 </body>
 </html>
